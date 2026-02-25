@@ -1,15 +1,12 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from "react";
+import authService, { User } from "@/services/authService";
 
-// User type
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'manager' | 'staff';
-  avatar?: string;
-}
-
-// Context type
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
@@ -32,13 +29,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      // Check localStorage for saved user (temporary - will use API later)
-      const savedUser = localStorage.getItem('user');
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
+      const token = localStorage.getItem("token");
+      if (token) {
+        const response = await authService.getUser();
+        if (response.success) {
+          setUser(response.data.user);
+        }
       }
     } catch (error) {
-      console.error('Auth check failed:', error);
+      console.error("Auth check failed:", error);
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
     } finally {
       setIsLoading(false);
     }
@@ -47,21 +48,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      // Simulated API call - will be replaced with real API
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await authService.login({ email, password });
 
-      // For now, create a mock user
-      const mockUser: User = {
-        id: '1',
-        name: 'John Doe',
-        email: email,
-        role: 'admin'
-      };
-
-      setUser(mockUser);
-      localStorage.setItem('user', JSON.stringify(mockUser));
-    } catch (error) {
-      throw new Error('Login failed');
+      if (response.success) {
+        const { user, token } = response.data;
+        localStorage.setItem("token", token);
+        localStorage.setItem("user", JSON.stringify(user));
+        setUser(user);
+      } else {
+        throw new Error("Login failed");
+      }
+    } catch (error: any) {
+      const message = error.response?.data?.message || "Login failed";
+      throw new Error(message);
     } finally {
       setIsLoading(false);
     }
@@ -70,29 +69,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (name: string, email: string, password: string) => {
     setIsLoading(true);
     try {
-      // Simulated API call - will be replaced with real API
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await authService.register({
+        name,
+        email,
+        password,
+        password_confirmation: password,
+      });
 
-      // For now, create a mock user
-      const mockUser: User = {
-        id: '1',
-        name: name,
-        email: email,
-        role: 'staff'
-      };
-
-      setUser(mockUser);
-      localStorage.setItem('user', JSON.stringify(mockUser));
-    } catch (error) {
-      throw new Error('Registration failed');
+      if (response.success) {
+        const { user, token } = response.data;
+        localStorage.setItem("token", token);
+        localStorage.setItem("user", JSON.stringify(user));
+        setUser(user);
+      } else {
+        throw new Error("Registration failed");
+      }
+    } catch (error: any) {
+      const message = error.response?.data?.message || "Registration failed";
+      throw new Error(message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('user');
+  const logout = async () => {
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.error("Logout error:", error);
+    } finally {
+      setUser(null);
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+    }
   };
 
   return (
@@ -103,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         login,
         register,
-        logout
+        logout,
       }}
     >
       {children}
@@ -114,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 }
