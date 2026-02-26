@@ -1,41 +1,127 @@
-import { useState } from 'react';
-import { Plus, Search, Filter, Edit, Trash2, Eye, Package } from 'lucide-react';
-import { useInventory } from '@/context/InventoryContext';
-import { Product } from '@/types';
+import { useState, useEffect } from 'react';
+import { Plus, Search, Filter, Edit, Trash2, Eye, Package, Loader } from 'lucide-react';
+import { productService, categoryService, supplierService } from '@/services';
 import { cn } from '@/utils/cn';
 
+interface Product {
+  id: number;
+  sku: string;
+  name: string;
+  description: string | null;
+  category_id: number;
+  supplier_id: number;
+  price: number;
+  cost_price: number;
+  quantity: number;
+  min_stock: number;
+  max_stock: number;
+  location: string | null;
+  image: string | null;
+  status: 'active' | 'inactive' | 'discontinued';
+  category?: { id: number; name: string };
+  supplier?: { id: number; name: string };
+  stock_status?: string;
+}
+
+interface Category {
+  id: number;
+  name: string;
+}
+
+interface Supplier {
+  id: number;
+  name: string;
+}
+
 export function Products() {
-  const { products, categories, suppliers, deleteProduct, addProduct, updateProduct } = useInventory();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [viewProduct, setViewProduct] = useState<Product | null>(null);
 
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+
+      const [prodResponse, catResponse, supResponse] = await Promise.all([
+        productService.getAll(),
+        categoryService.getAll(),
+        supplierService.getAll()
+      ]);
+
+      if (prodResponse.success) setProducts(prodResponse.data.products);
+      if (catResponse.success) setCategories(catResponse.data.categories);
+      if (supResponse.success) setSuppliers(supResponse.data.suppliers);
+
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const filteredProducts = products.filter(product => {
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          product.sku.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
+    const matchesCategory = categoryFilter === 'all' || product.category_id.toString() === categoryFilter;
     const matchesStatus = statusFilter === 'all' || product.status === statusFilter;
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this product?')) {
-      deleteProduct(id);
+  const handleDelete = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this product?')) return;
+
+    try {
+      const response = await productService.delete(id);
+      if (response.success) {
+        setProducts(products.filter(p => p.id !== id));
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete product');
     }
   };
 
-  const handleEdit = (product: Product) => {
-    setEditingProduct(product);
-    setShowModal(true);
+  const handleSave = async (data: any) => {
+    try {
+      if (editingProduct) {
+        const response = await productService.update(editingProduct.id, data);
+        if (response.success) {
+          fetchData();
+        }
+      } else {
+        const response = await productService.create(data);
+        if (response.success) {
+          fetchData();
+        }
+      }
+      setShowModal(false);
+      setEditingProduct(null);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to save product');
+    }
   };
 
-  const handleAddNew = () => {
-    setEditingProduct(null);
-    setShowModal(true);
-  };
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -46,13 +132,22 @@ export function Products() {
           <p className="text-slate-500">Manage your product inventory</p>
         </div>
         <button 
-          onClick={handleAddNew}
+          onClick={() => {
+            setEditingProduct(null);
+            setShowModal(true);
+          }}
           className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Add Product
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
@@ -79,7 +174,7 @@ export function Products() {
             >
               <option value="all">All Categories</option>
               {categories.map(cat => (
-                <option key={cat.id} value={cat.name}>{cat.name}</option>
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
               ))}
             </select>
           </div>
@@ -127,7 +222,7 @@ export function Products() {
                       </div>
                       <div>
                         <p className="font-medium text-slate-900">{product.name}</p>
-                        <p className="text-sm text-slate-500">{product.supplier}</p>
+                        <p className="text-sm text-slate-500">{product.supplier?.name}</p>
                       </div>
                     </div>
                   </td>
@@ -136,23 +231,23 @@ export function Products() {
                   </td>
                   <td className="py-4 px-6">
                     <span className="inline-flex px-2 py-1 bg-slate-100 text-slate-700 rounded-md text-sm">
-                      {product.category}
+                      {product.category?.name || 'N/A'}
                     </span>
                   </td>
                   <td className="py-4 px-6">
                     <p className="font-medium text-slate-900">${product.price.toFixed(2)}</p>
-                    <p className="text-xs text-slate-500">Cost: ${product.costPrice.toFixed(2)}</p>
+                    <p className="text-xs text-slate-500">Cost: ${product.cost_price.toFixed(2)}</p>
                   </td>
                   <td className="py-4 px-6">
                     <div className="flex items-center gap-2">
                       <span className={cn(
                         "font-medium",
                         product.quantity === 0 ? "text-red-600" :
-                        product.quantity <= product.minStock ? "text-amber-600" : "text-slate-900"
+                        product.quantity <= product.min_stock ? "text-amber-600" : "text-slate-900"
                       )}>
                         {product.quantity}
                       </span>
-                      {product.quantity <= product.minStock && product.quantity > 0 && (
+                      {product.quantity <= product.min_stock && product.quantity > 0 && (
                         <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Low</span>
                       )}
                       {product.quantity === 0 && (
@@ -179,7 +274,10 @@ export function Products() {
                         <Eye className="w-4 h-4" />
                       </button>
                       <button 
-                        onClick={() => handleEdit(product)}
+                        onClick={() => {
+                          setEditingProduct(product);
+                          setShowModal(true);
+                        }}
                         className="p-2 hover:bg-slate-100 rounded-lg text-slate-600"
                       >
                         <Edit className="w-4 h-4" />
@@ -210,17 +308,13 @@ export function Products() {
       {showModal && (
         <ProductModal
           product={editingProduct}
-          categories={categories.map(c => c.name)}
-          suppliers={suppliers.filter(s => s.status === 'active').map(s => s.name)}
-          onClose={() => setShowModal(false)}
-          onSave={(data) => {
-            if (editingProduct) {
-              updateProduct(editingProduct.id, data);
-            } else {
-              addProduct(data as Omit<Product, 'id' | 'createdAt' | 'updatedAt'>);
-            }
+          categories={categories}
+          suppliers={suppliers}
+          onClose={() => {
             setShowModal(false);
+            setEditingProduct(null);
           }}
+          onSave={handleSave}
         />
       )}
 
@@ -244,30 +338,33 @@ function ProductModal({
   onSave
 }: {
   product: Product | null;
-  categories: string[];
-  suppliers: string[];
+  categories: Category[];
+  suppliers: Supplier[];
   onClose: () => void;
-  onSave: (data: Partial<Product>) => void;
+  onSave: (data: any) => void;
 }) {
   const [formData, setFormData] = useState({
-    name: product?.name || '',
     sku: product?.sku || '',
+    name: product?.name || '',
     description: product?.description || '',
-    category: product?.category || categories[0] || '',
+    category_id: product?.category_id || (categories[0]?.id || ''),
+    supplier_id: product?.supplier_id || (suppliers[0]?.id || ''),
     price: product?.price || 0,
-    costPrice: product?.costPrice || 0,
+    cost_price: product?.cost_price || 0,
     quantity: product?.quantity || 0,
-    minStock: product?.minStock || 10,
-    maxStock: product?.maxStock || 100,
-    supplier: product?.supplier || suppliers[0] || '',
+    min_stock: product?.min_stock || 10,
+    max_stock: product?.max_stock || 100,
     location: product?.location || '',
     image: product?.image || '',
-    status: product?.status || 'active' as const,
+    status: product?.status || 'active',
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    setIsLoading(true);
+    await onSave(formData);
+    setIsLoading(false);
   };
 
   return (
@@ -313,24 +410,24 @@ function ProductModal({
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
               <select
-                value={formData.category}
-                onChange={(e) => setFormData({...formData, category: e.target.value})}
+                value={formData.category_id}
+                onChange={(e) => setFormData({...formData, category_id: parseInt(e.target.value)})}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 {categories.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Supplier</label>
               <select
-                value={formData.supplier}
-                onChange={(e) => setFormData({...formData, supplier: e.target.value})}
+                value={formData.supplier_id}
+                onChange={(e) => setFormData({...formData, supplier_id: parseInt(e.target.value)})}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 {suppliers.map(sup => (
-                  <option key={sup} value={sup}>{sup}</option>
+                  <option key={sup.id} value={sup.id}>{sup.name}</option>
                 ))}
               </select>
             </div>
@@ -351,8 +448,8 @@ function ProductModal({
                 type="number"
                 step="0.01"
                 required
-                value={formData.costPrice}
-                onChange={(e) => setFormData({...formData, costPrice: parseFloat(e.target.value)})}
+                value={formData.cost_price}
+                onChange={(e) => setFormData({...formData, cost_price: parseFloat(e.target.value)})}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
@@ -371,8 +468,8 @@ function ProductModal({
               <input
                 type="number"
                 required
-                value={formData.minStock}
-                onChange={(e) => setFormData({...formData, minStock: parseInt(e.target.value)})}
+                value={formData.min_stock}
+                onChange={(e) => setFormData({...formData, min_stock: parseInt(e.target.value)})}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
@@ -381,8 +478,8 @@ function ProductModal({
               <input
                 type="number"
                 required
-                value={formData.maxStock}
-                onChange={(e) => setFormData({...formData, maxStock: parseInt(e.target.value)})}
+                value={formData.max_stock}
+                onChange={(e) => setFormData({...formData, max_stock: parseInt(e.target.value)})}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
@@ -428,9 +525,10 @@ function ProductModal({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              disabled={isLoading}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
             >
-              {product ? 'Update Product' : 'Add Product'}
+              {isLoading ? 'Saving...' : (product ? 'Update Product' : 'Add Product')}
             </button>
           </div>
         </form>
@@ -467,7 +565,7 @@ function ViewProductModal({ product, onClose }: { product: Product; onClose: () 
             </div>
           </div>
 
-          <p className="mt-4 text-slate-600">{product.description}</p>
+          <p className="mt-4 text-slate-600">{product.description || 'No description'}</p>
 
           <div className="mt-6 grid grid-cols-2 gap-4">
             <div className="bg-slate-50 p-3 rounded-lg">
@@ -476,7 +574,7 @@ function ViewProductModal({ product, onClose }: { product: Product; onClose: () 
             </div>
             <div className="bg-slate-50 p-3 rounded-lg">
               <p className="text-xs text-slate-500">Cost Price</p>
-              <p className="text-lg font-bold text-slate-900">${product.costPrice.toFixed(2)}</p>
+              <p className="text-lg font-bold text-slate-900">${product.cost_price.toFixed(2)}</p>
             </div>
             <div className="bg-slate-50 p-3 rounded-lg">
               <p className="text-xs text-slate-500">Current Stock</p>
@@ -484,26 +582,26 @@ function ViewProductModal({ product, onClose }: { product: Product; onClose: () 
             </div>
             <div className="bg-slate-50 p-3 rounded-lg">
               <p className="text-xs text-slate-500">Category</p>
-              <p className="text-lg font-bold text-slate-900">{product.category}</p>
+              <p className="text-lg font-bold text-slate-900">{product.category?.name || 'N/A'}</p>
             </div>
           </div>
 
           <div className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-slate-500">Supplier:</span>
-              <span className="text-slate-900">{product.supplier}</span>
+              <span className="text-slate-900">{product.supplier?.name || 'N/A'}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">Location:</span>
-              <span className="text-slate-900">{product.location}</span>
+              <span className="text-slate-900">{product.location || 'N/A'}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">Min Stock:</span>
-              <span className="text-slate-900">{product.minStock}</span>
+              <span className="text-slate-900">{product.min_stock}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">Max Stock:</span>
-              <span className="text-slate-900">{product.maxStock}</span>
+              <span className="text-slate-900">{product.max_stock}</span>
             </div>
           </div>
 
