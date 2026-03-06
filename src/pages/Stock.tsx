@@ -1,22 +1,93 @@
-import { useState } from 'react';
-import { ArrowDownCircle, ArrowUpCircle, RefreshCw, Package } from 'lucide-react';
-import { useInventory } from '@/context/InventoryContext';
+import { useState, useEffect } from 'react';
+import { ArrowDownCircle, ArrowUpCircle, RefreshCw, Package, Loader } from 'lucide-react';
+import { stockService, productService } from '@/services';
 import { cn } from '@/utils/cn';
 
+interface StockMovement {
+  id: number;
+  product_id: number;
+  product_name: string;
+  type: 'in' | 'out' | 'adjustment';
+  quantity: number;
+  stock_before: number;
+  stock_after: number;
+  reason: string;
+  reference: string | null;
+  created_by: number;
+  created_at: string;
+}
+
+interface Product {
+  id: number;
+  name: string;
+  sku: string;
+  quantity: number;
+  min_stock: number;
+  max_stock: number;
+  image: string | null;
+}
+
 export function Stock() {
-  const { products, stockMovements, addStockMovement } = useInventory();
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [movementType, setMovementType] = useState<'in' | 'out' | 'adjustment'>('in');
   const [filterType, setFilterType] = useState('all');
 
-  const filteredMovements = stockMovements
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+
+      const [movementsRes, productsRes] = await Promise.all([
+        stockService.getAll(),
+        productService.getAll()
+      ]);
+
+      if (movementsRes.success) setMovements(movementsRes.data.movements);
+      if (productsRes.success) setProducts(productsRes.data.products);
+
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredMovements = movements
     .filter(m => filterType === 'all' || m.type === filterType)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const openModal = (type: 'in' | 'out' | 'adjustment') => {
     setMovementType(type);
     setShowModal(true);
   };
+
+  const handleCreateMovement = async (data: any) => {
+    try {
+      const response = await stockService.create(data);
+      if (response.success) {
+        fetchData();
+        setShowModal(false);
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to create stock movement');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -51,6 +122,12 @@ export function Stock() {
         </div>
       </div>
 
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">
+          {error}
+        </div>
+      )}
+
       {/* Quick Stock Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {products.slice(0, 4).map(product => (
@@ -75,13 +152,13 @@ export function Stock() {
               </div>
               <div className="text-right">
                 <div className="flex items-center gap-1">
-                  {product.quantity <= product.minStock ? (
+                  {product.quantity <= product.min_stock ? (
                     <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">Low Stock</span>
                   ) : (
                     <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">In Stock</span>
                   )}
                 </div>
-                <p className="text-xs text-slate-500 mt-1">Min: {product.minStock}</p>
+                <p className="text-xs text-slate-500 mt-1">Min: {product.min_stock}</p>
               </div>
             </div>
             <div className="mt-3 w-full bg-slate-200 rounded-full h-2">
@@ -89,9 +166,9 @@ export function Stock() {
                 className={cn(
                   "h-2 rounded-full",
                   product.quantity === 0 ? "bg-red-500" :
-                  product.quantity <= product.minStock ? "bg-amber-500" : "bg-green-500"
+                  product.quantity <= product.min_stock ? "bg-amber-500" : "bg-green-500"
                 )}
-                style={{ width: `${Math.min((product.quantity / product.maxStock) * 100, 100)}%` }}
+                style={{ width: `${Math.min((product.quantity / product.max_stock) * 100, 100)}%` }}
               />
             </div>
           </div>
@@ -131,17 +208,19 @@ export function Stock() {
                 <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Product</th>
                 <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Type</th>
                 <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Quantity</th>
+                <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Before → After</th>
                 <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Reason</th>
                 <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">Reference</th>
-                <th className="text-left py-4 px-6 text-sm font-semibold text-slate-600">By</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredMovements.map((movement) => (
                 <tr key={movement.id} className="hover:bg-slate-50">
-                  <td className="py-4 px-6 text-sm text-slate-600">{movement.createdAt}</td>
+                  <td className="py-4 px-6 text-sm text-slate-600">
+                    {new Date(movement.created_at).toLocaleDateString()}
+                  </td>
                   <td className="py-4 px-6">
-                    <p className="font-medium text-slate-900">{movement.productName}</p>
+                    <p className="font-medium text-slate-900">{movement.product_name}</p>
                   </td>
                   <td className="py-4 px-6">
                     <span className={cn(
@@ -163,14 +242,16 @@ export function Stock() {
                       movement.type === 'out' ? "text-red-600" : "text-amber-600"
                     )}>
                       {movement.type === 'in' ? '+' : movement.type === 'out' ? '-' : ''}
-                      {Math.abs(movement.quantity)}
+                      {movement.quantity}
                     </span>
+                  </td>
+                  <td className="py-4 px-6 text-sm text-slate-600">
+                    {movement.stock_before} → {movement.stock_after}
                   </td>
                   <td className="py-4 px-6 text-sm text-slate-600">{movement.reason}</td>
                   <td className="py-4 px-6">
-                    <span className="font-mono text-sm text-slate-600">{movement.reference}</span>
+                    <span className="font-mono text-sm text-slate-600">{movement.reference || '-'}</span>
                   </td>
-                  <td className="py-4 px-6 text-sm text-slate-600">{movement.createdBy}</td>
                 </tr>
               ))}
             </tbody>
@@ -191,10 +272,7 @@ export function Stock() {
           type={movementType}
           products={products}
           onClose={() => setShowModal(false)}
-          onSave={(data) => {
-            addStockMovement(data);
-            setShowModal(false);
-          }}
+          onSave={handleCreateMovement}
         />
       )}
     </div>
@@ -208,31 +286,23 @@ function StockMovementModal({
   onSave
 }: {
   type: 'in' | 'out' | 'adjustment';
-  products: { id: string; name: string; quantity: number }[];
+  products: Product[];
   onClose: () => void;
-  onSave: (data: { productId: string; productName: string; type: 'in' | 'out' | 'adjustment'; quantity: number; reason: string; reference: string; createdBy: string }) => void;
+  onSave: (data: any) => void;
 }) {
   const [formData, setFormData] = useState({
-    productId: products[0]?.id || '',
-    quantity: 0,
+    product_id: products[0]?.id || 0,
+    quantity: 1,
     reason: '',
     reference: ''
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const product = products.find(p => p.id === formData.productId);
-    if (!product) return;
-
-    onSave({
-      productId: formData.productId,
-      productName: product.name,
-      type,
-      quantity: type === 'adjustment' ? formData.quantity : Math.abs(formData.quantity),
-      reason: formData.reason,
-      reference: formData.reference || `${type.toUpperCase()}-${Date.now()}`,
-      createdBy: 'John Admin'
-    });
+    setIsLoading(true);
+    await onSave({ ...formData, type });
+    setIsLoading(false);
   };
 
   const titles = {
@@ -255,7 +325,7 @@ function StockMovementModal({
           <p className="text-sm text-slate-500 mt-1">
             {type === 'in' && 'Add stock to inventory'}
             {type === 'out' && 'Remove stock from inventory'}
-            {type === 'adjustment' && 'Adjust stock levels (use negative for decrease)'}
+            {type === 'adjustment' && 'Set stock to a specific quantity'}
           </p>
         </div>
         
@@ -264,8 +334,8 @@ function StockMovementModal({
             <label className="block text-sm font-medium text-slate-700 mb-1">Product</label>
             <select
               required
-              value={formData.productId}
-              onChange={(e) => setFormData({...formData, productId: e.target.value})}
+              value={formData.product_id}
+              onChange={(e) => setFormData({...formData, product_id: parseInt(e.target.value)})}
               className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               {products.map(product => (
@@ -281,9 +351,9 @@ function StockMovementModal({
             <input
               type="number"
               required
-              min={type === 'adjustment' ? undefined : 1}
+              min={1}
               value={formData.quantity}
-              onChange={(e) => setFormData({...formData, quantity: parseInt(e.target.value)})}
+              onChange={(e) => setFormData({...formData, quantity: parseInt(e.target.value) || 1})}
               className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
@@ -321,9 +391,10 @@ function StockMovementModal({
             </button>
             <button
               type="submit"
-              className={cn("px-4 py-2 text-white rounded-lg transition-colors", colors[type])}
+              disabled={isLoading}
+              className={cn("px-4 py-2 text-white rounded-lg transition-colors disabled:opacity-50", colors[type])}
             >
-              Confirm {titles[type]}
+              {isLoading ? 'Saving...' : `Confirm ${titles[type]}`}
             </button>
           </div>
         </form>

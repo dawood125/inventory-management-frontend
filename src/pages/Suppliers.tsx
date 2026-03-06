@@ -1,15 +1,49 @@
-import { useState } from 'react';
-import { Plus, Search, Edit, Trash2, Star, Phone, Mail, MapPin, Truck } from 'lucide-react';
-import { useInventory } from '@/context/InventoryContext';
-import { Supplier } from '@/types';
+import { useState, useEffect } from 'react';
+import { Plus, Search, Edit, Trash2, Star, Phone, Mail, MapPin, Truck, Loader } from 'lucide-react';
+import { supplierService } from '@/services';
 import { cn } from '@/utils/cn';
 
+interface Supplier {
+  id: number;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  country: string;
+  status: 'active' | 'inactive';
+  rating: number;
+  total_orders: number;
+  created_at: string;
+}
+
 export function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, deleteSupplier } = useInventory();
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
-  const [statusFilter, setStatusFilter] = useState('all');
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, []);
+
+  const fetchSuppliers = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      const response = await supplierService.getAll();
+      if (response.success) {
+        setSuppliers(response.data.suppliers);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load suppliers');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const filteredSuppliers = suppliers.filter(supplier => {
     const matchesSearch = supplier.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -18,21 +52,46 @@ export function Suppliers() {
     return matchesSearch && matchesStatus;
   });
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this supplier?')) {
-      deleteSupplier(id);
+  const handleDelete = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this supplier?')) return;
+
+    try {
+      const response = await supplierService.delete(id);
+      if (response.success) {
+        setSuppliers(suppliers.filter(s => s.id !== id));
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete supplier');
     }
   };
 
-  const handleEdit = (supplier: Supplier) => {
-    setEditingSupplier(supplier);
-    setShowModal(true);
+  const handleSave = async (data: any) => {
+    try {
+      if (editingSupplier) {
+        const response = await supplierService.update(editingSupplier.id, data);
+        if (response.success) {
+          fetchSuppliers();
+        }
+      } else {
+        const response = await supplierService.create(data);
+        if (response.success) {
+          fetchSuppliers();
+        }
+      }
+      setShowModal(false);
+      setEditingSupplier(null);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to save supplier');
+    }
   };
 
-  const handleAddNew = () => {
-    setEditingSupplier(null);
-    setShowModal(true);
-  };
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader className="w-8 h-8 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -43,13 +102,22 @@ export function Suppliers() {
           <p className="text-slate-500">Manage your suppliers and vendors</p>
         </div>
         <button 
-          onClick={handleAddNew}
+          onClick={() => {
+            setEditingSupplier(null);
+            setShowModal(true);
+          }}
           className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Add Supplier
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600">
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4 bg-white rounded-xl p-4 shadow-sm border border-slate-200">
@@ -108,7 +176,10 @@ export function Suppliers() {
               </div>
               <div className="flex gap-1">
                 <button 
-                  onClick={() => handleEdit(supplier)}
+                  onClick={() => {
+                    setEditingSupplier(supplier);
+                    setShowModal(true);
+                  }}
                   className="p-2 hover:bg-slate-100 rounded-lg text-slate-600"
                 >
                   <Edit className="w-4 h-4" />
@@ -145,14 +216,14 @@ export function Suppliers() {
               </div>
               <div className="flex items-center gap-1 text-sm text-slate-600">
                 <Truck className="w-4 h-4 text-slate-400" />
-                <span>{supplier.totalOrders} orders</span>
+                <span>{supplier.total_orders} orders</span>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {filteredSuppliers.length === 0 && (
+      {filteredSuppliers.length === 0 && !isLoading && (
         <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
           <Truck className="w-12 h-12 text-slate-300 mx-auto mb-4" />
           <p className="text-slate-500">No suppliers found</p>
@@ -163,15 +234,11 @@ export function Suppliers() {
       {showModal && (
         <SupplierModal
           supplier={editingSupplier}
-          onClose={() => setShowModal(false)}
-          onSave={(data) => {
-            if (editingSupplier) {
-              updateSupplier(editingSupplier.id, data);
-            } else {
-              addSupplier(data as Omit<Supplier, 'id' | 'createdAt' | 'totalOrders'>);
-            }
+          onClose={() => {
             setShowModal(false);
+            setEditingSupplier(null);
           }}
+          onSave={handleSave}
         />
       )}
     </div>
@@ -185,7 +252,7 @@ function SupplierModal({
 }: {
   supplier: Supplier | null;
   onClose: () => void;
-  onSave: (data: Partial<Supplier>) => void;
+  onSave: (data: any) => void;
 }) {
   const [formData, setFormData] = useState({
     name: supplier?.name || '',
@@ -194,18 +261,21 @@ function SupplierModal({
     address: supplier?.address || '',
     city: supplier?.city || '',
     country: supplier?.country || '',
-    status: supplier?.status || 'active' as const,
+    status: supplier?.status || 'active',
     rating: supplier?.rating || 4.0,
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    setIsLoading(true);
+    await onSave(formData);
+    setIsLoading(false);
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl max-w-md w-full">
+      <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6 border-b border-slate-200">
           <h2 className="text-xl font-bold text-slate-900">
             {supplier ? 'Edit Supplier' : 'Add New Supplier'}
@@ -297,9 +367,10 @@ function SupplierModal({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              disabled={isLoading}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
             >
-              {supplier ? 'Update Supplier' : 'Add Supplier'}
+              {isLoading ? 'Saving...' : (supplier ? 'Update' : 'Create')}
             </button>
           </div>
         </form>
